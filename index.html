@@ -12,12 +12,17 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // SAFETY CHECK: Handle missing environment variables to prevent script crash
+        let firebaseConfig = {};
+        try {
+            firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        } catch (e) {
+            console.error("Firebase config missing or invalid.");
+        }
+
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'study-tracker-v2';
 
+        let app, auth, db;
         let currentUser = null;
         let history = [];
         let goals = [];
@@ -46,11 +51,26 @@
         };
 
         const initApp = async () => {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
+            // Only initialize if config is present
+            if (!firebaseConfig.apiKey) {
+                console.warn("App running in local/demo mode (No Firebase Config)");
+                return;
             }
+
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.error("Auth error:", err);
+            }
+
             onAuthStateChanged(auth, (user) => {
                 if (user) {
                     currentUser = user;
@@ -60,7 +80,7 @@
         };
 
         const setupDataSync = () => {
-            if (!currentUser) return;
+            if (!currentUser || !db) return;
             const userDocRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'appData', 'state');
             onSnapshot(userDocRef, (docSnap) => {
                 if (docSnap.exists()) {
@@ -77,28 +97,38 @@
         };
 
         const pushToCloud = async () => {
-            if (!currentUser) return;
+            if (!currentUser || !db) return;
             const userDocRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'appData', 'state');
             await setDoc(userDocRef, { history, goals, inventory, lastUpdated: Date.now() });
         };
 
         window.calculateTotals = () => {
             const inputs = getInputs();
+            if (!inputs.phyMcq) return { p: 0, m: 0, c: 0 };
+
             const p = (parseInt(inputs.phyMcq.value) || 0) + (parseInt(inputs.phyEssay.value) || 0);
             const m = (parseInt(inputs.pure.value) || 0) + (parseInt(inputs.applied.value) || 0);
             const c = (parseInt(inputs.chemMcq.value) || 0) + (parseInt(inputs.chemEssay.value) || 0);
 
-            document.getElementById('phy-total-display').innerText = `${p} units`;
-            document.getElementById('maths-total-display').innerText = `${m} units`;
-            document.getElementById('chem-total-display').innerText = `${c} units`;
+            const phyDisp = document.getElementById('phy-total-display');
+            const mathsDisp = document.getElementById('maths-total-display');
+            const chemDisp = document.getElementById('chem-total-display');
+
+            if (phyDisp) phyDisp.innerText = `${p} units`;
+            if (mathsDisp) mathsDisp.innerText = `${m} units`;
+            if (chemDisp) chemDisp.innerText = `${c} units`;
 
             const total = p + m + c;
             const badge = document.getElementById('inventory-badge-container');
-            if (total > 0) {
-                badge.classList.remove('hidden');
-                document.getElementById('inventory-count-badge').innerText = total;
-            } else {
-                badge.classList.add('hidden');
+            const countBadge = document.getElementById('inventory-count-badge');
+            
+            if (badge && countBadge) {
+                if (total > 0) {
+                    badge.classList.remove('hidden');
+                    countBadge.innerText = total;
+                } else {
+                    badge.classList.add('hidden');
+                }
             }
             return { p, m, c };
         };
@@ -170,11 +200,12 @@
             });
             await pushToCloud();
             window.resetInputs();
+            renderHistory();
         };
 
         window.resetInputs = () => {
             const inputs = getInputs();
-            Object.values(inputs).forEach(i => i.value = 0);
+            Object.values(inputs).forEach(i => { if(i) i.value = 0; });
             calculateTotals();
             updateCharts();
         };
@@ -201,17 +232,20 @@
             if (!text) return;
             goals.push({ id: Date.now(), subject, text, completed: false });
             document.getElementById('goal-desc').value = '';
+            renderGoals();
             await pushToCloud();
         };
 
         window.toggleGoal = async (id) => {
             const g = goals.find(x => x.id === id);
             if (g) g.completed = !g.completed;
+            renderGoals();
             await pushToCloud();
         };
 
         window.deleteGoal = async (id) => {
             goals = goals.filter(x => x.id !== id);
+            renderGoals();
             await pushToCloud();
         };
 
@@ -220,16 +254,18 @@
             const entry = `${document.getElementById('paper-year').value} ${document.getElementById('paper-type').value}`;
             if (!inventory[subject].includes(entry)) {
                 inventory[subject].push(entry);
+                renderInventory();
                 await pushToCloud();
             }
         };
 
         window.removePaper = async (sub, idx) => {
             inventory[sub].splice(idx, 1);
+            renderInventory();
             await pushToCloud();
         };
 
-        function renderHistory() {
+        window.renderHistory = () => {
             const body = document.getElementById('history-body');
             if(!body) return;
             body.innerHTML = history.length === 0 ? '<tr><td colspan="5" class="p-12 text-center text-slate-400 italic">No activity logs recorded yet.</td></tr>' :
@@ -242,9 +278,9 @@
                         <td class="px-6 py-4 text-center font-black text-slate-900 dark:text-slate-50 underline decoration-slate-200">${e.total}</td>
                     </tr>
                 `).join('');
-        }
+        };
 
-        function renderGoals() {
+        window.renderGoals = () => {
             const list = document.getElementById('goals-list');
             if(!list) return;
             list.innerHTML = goals.length === 0 ? '<div class="p-16 text-center text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-3xl">Set your weekly study targets here.</div>' :
@@ -261,9 +297,9 @@
                         <button onclick="deleteGoal(${g.id})" class="text-slate-300 hover:text-red-500 p-2 text-2xl transition-colors">&times;</button>
                     </div>
                 `).join('');
-        }
+        };
 
-        function renderInventory() {
+        window.renderInventory = () => {
             const container = document.getElementById('inventory-container');
             if(!container) return;
             container.innerHTML = Object.keys(inventory).map(sub => `
@@ -282,7 +318,7 @@
                     </div>
                 </div>
             `).join('');
-        }
+        };
 
         window.switchPage = (pageId) => {
             const pages = ['dashboard', 'goals', 'inventory'];
@@ -313,7 +349,10 @@
             window.updatePaperTypes = () => {
                 const sub = document.getElementById('paper-subject').value;
                 const types = sub === 'Combined Maths' ? ['Pure', 'Applied'] : ['MCQ', 'Struct/Essay'];
-                document.getElementById('paper-type').innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join('');
+                const typeSelect = document.getElementById('paper-type');
+                if (typeSelect) {
+                    typeSelect.innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join('');
+                }
             };
             updatePaperTypes();
 
@@ -323,6 +362,13 @@
             });
             
             initApp();
+            
+            // Initial render call to show empty states or existing local data
+            renderHistory();
+            renderGoals();
+            renderInventory();
+            updateCharts();
+            
             window.addEventListener('resize', () => { if (charts.dist && charts.trend) updateCharts(); });
         };
 
@@ -332,7 +378,7 @@
         body { font-family: 'Plus Jakarta Sans', sans-serif; transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1); -webkit-tap-highlight-color: transparent; }
         .card { background: white; border-radius: 1.5rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.04); transition: transform 0.2s ease, box-shadow 0.2s ease; }
         .dark .card { background: #1e293b; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); }
-        .nav-link { position: relative; color: #64748b; }
+        .nav-link { position: relative; color: #64748b; cursor: pointer; }
         .nav-link.active { color: #1e293b; }
         .dark .nav-link.active { color: #f8fafc; }
         .nav-link.active::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 100%; height: 3px; background: #6366f1; border-radius: 99px; }
@@ -352,11 +398,11 @@
         <!-- Navigation -->
         <nav class="sticky top-0 z-50 bg-[#f8fafc]/80 dark:bg-slate-950/80 backdrop-blur-md mb-10 flex justify-between items-center border-b border-slate-200 dark:border-slate-800">
             <div class="flex gap-6 overflow-x-auto no-scrollbar py-2">
-                <button onclick="switchPage('dashboard')" id="nav-dashboard" class="nav-link active pb-3 text-sm font-bold transition-all whitespace-nowrap">Dashboard</button>
-                <button onclick="switchPage('goals')" id="nav-goals" class="nav-link pb-3 text-sm font-bold transition-all whitespace-nowrap">Focus</button>
-                <button onclick="switchPage('inventory')" id="nav-inventory" class="nav-link pb-3 text-sm font-bold transition-all whitespace-nowrap">Vault</button>
+                <button type="button" onclick="switchPage('dashboard')" id="nav-dashboard" class="nav-link active pb-3 text-sm font-bold transition-all whitespace-nowrap">Dashboard</button>
+                <button type="button" onclick="switchPage('goals')" id="nav-goals" class="nav-link pb-3 text-sm font-bold transition-all whitespace-nowrap">Focus</button>
+                <button type="button" onclick="switchPage('inventory')" id="nav-inventory" class="nav-link pb-3 text-sm font-bold transition-all whitespace-nowrap">Vault</button>
             </div>
-            <button onclick="toggleTheme()" class="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-center mb-3">
+            <button type="button" onclick="toggleTheme()" class="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-center mb-3">
                 <span class="dark:hidden">☀️</span><span class="hidden dark:inline">🌙</span>
             </button>
         </nav>
@@ -404,8 +450,8 @@
             </div>
 
             <div class="flex flex-col sm:flex-row gap-4">
-                <button onclick="saveWeekToHistory()" class="flex-1 bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-black py-5 rounded-3xl shadow-xl hover:scale-[1.01] transition-all">Save Week Progress</button>
-                <button onclick="resetInputs()" class="bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold px-8 py-5 rounded-3xl hover:bg-slate-300 dark:hover:bg-slate-700 transition-all">Reset Inputs</button>
+                <button type="button" onclick="saveWeekToHistory()" class="flex-1 bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-black py-5 rounded-3xl shadow-xl hover:scale-[1.01] transition-all">Save Week Progress</button>
+                <button type="button" onclick="resetInputs()" class="bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold px-8 py-5 rounded-3xl hover:bg-slate-300 dark:hover:bg-slate-700 transition-all">Reset Inputs</button>
             </div>
 
             <!-- Charts -->
@@ -443,7 +489,7 @@
                 <div class="space-y-4">
                     <select id="goal-subject" class="w-full p-4 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl text-sm font-bold outline-none"><option>Physics</option><option>Combined Maths</option><option>Chemistry</option><option>General</option></select>
                     <textarea id="goal-desc" rows="3" class="w-full p-4 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl text-sm font-bold outline-none" placeholder="Task description..."></textarea>
-                    <button onclick="addGoal()" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-sm">SET TARGET</button>
+                    <button type="button" onclick="addGoal()" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-sm">SET TARGET</button>
                 </div>
             </div>
             <div class="space-y-4" id="goals-list"></div>
@@ -458,7 +504,7 @@
                         <select id="paper-year" class="flex-1 p-4 bg-white/10 text-white border-2 border-white/20 rounded-2xl text-sm font-bold outline-none focus:border-white"></select>
                         <select id="paper-type" class="flex-1 p-4 bg-white/10 text-white border-2 border-white/20 rounded-2xl text-sm font-bold outline-none focus:border-white"></select>
                     </div>
-                    <button onclick="addPaperToInventory()" class="w-full bg-white text-indigo-600 py-4 rounded-2xl font-black text-sm">COLLECT PAPER</button>
+                    <button type="button" onclick="addPaperToInventory()" class="w-full bg-white text-indigo-600 py-4 rounded-2xl font-black text-sm">COLLECT PAPER</button>
                 </div>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="inventory-container"></div>
