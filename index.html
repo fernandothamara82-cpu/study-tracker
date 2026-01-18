@@ -17,6 +17,7 @@
         let history = [];
         let goals = [];
         let inventory = { "Physics": [], "Combined Maths": [], "Chemistry": [] };
+        
         // currentProgress stores the values currently in the input boxes
         let currentProgress = { phyMcq: 0, phyEssay: 0, pure: 0, applied: 0, chemMcq: 0, chemEssay: 0 };
         let charts = { dist: null, trend: null };
@@ -140,7 +141,6 @@
             const trendCtx = document.getElementById('chart-trend')?.getContext('2d');
             if (!distCtx || !trendCtx) return;
 
-            // Subject Distribution - ALWAYS FROM TOTAL DATA (History + Current)
             let totalP = 0, totalM = 0, totalC = 0;
             history.forEach(h => {
                 totalP += h.phyTotal || 0;
@@ -148,7 +148,6 @@
                 totalC += h.chemTotal || 0;
             });
             
-            // Add current session values to the distribution
             const current = calculateTotals();
             totalP += current.p;
             totalM += current.m;
@@ -175,7 +174,6 @@
                 }
             });
 
-            // Activity Trend
             if (charts.trend) charts.trend.destroy();
             const sortedHistory = [...history].sort((a, b) => a.timestamp - b.timestamp);
             charts.trend = new Chart(trendCtx, {
@@ -195,18 +193,11 @@
             });
         };
 
-        // Function to load historical data back into inputs
         window.loadHistoricalRecord = (timestamp) => {
             const record = history.find(h => h.timestamp === timestamp);
             if (!record) return;
 
-            // Update UI components
             document.getElementById('log-date-picker').value = new Date(timestamp).toISOString().split('T')[0];
-            
-            // Map the simplified totals back to detail inputs 
-            // (Note: Since we only save totals, we distribute them simply or just show the primary state)
-            // To make this accurate, we'd need to save mcq/essay separately in history too.
-            // For now, we'll populate the state if it exists, otherwise use totals
             currentProgress.phyMcq = record.phyMcq || record.phyTotal || 0;
             currentProgress.phyEssay = record.phyEssay || 0;
             currentProgress.pure = record.pure || record.mathsTotal || 0;
@@ -217,8 +208,6 @@
             syncInputsToState();
             calculateTotals();
             updateCharts();
-            
-            // Scroll to top to see pulse
             window.scrollTo({ top: 0, behavior: 'smooth' });
         };
 
@@ -228,17 +217,14 @@
             
             const dateInput = document.getElementById('log-date-picker').value;
             const logDate = dateInput ? new Date(dateInput) : new Date();
-            // Using a standard ISO-like string for ID to avoid local format issues
             const dateStr = logDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             
             const existingIndex = history.findIndex(h => h.date === dateStr);
-            
             const recordData = {
                 date: dateStr,
                 phyTotal: t.p,
                 mathsTotal: t.m,
                 chemTotal: t.c,
-                // Saving individual fields for precise reloading later
                 phyMcq: currentProgress.phyMcq,
                 phyEssay: currentProgress.phyEssay,
                 pure: currentProgress.pure,
@@ -255,8 +241,6 @@
                 history.push(recordData);
             }
             
-            // Optional: reset after save? Or keep for editing? 
-            // Users usually want to clear after archiving a successful week.
             Object.keys(currentProgress).forEach(key => currentProgress[key] = 0);
             await pushData();
             syncInputsToState();
@@ -312,7 +296,6 @@
         };
 
         window.logFromInventory = async (subject, paper) => {
-            const inputs = getInputs();
             if (subject === "Physics") {
                 if (paper.includes("MCQ")) currentProgress.phyMcq++;
                 else currentProgress.phyEssay++;
@@ -417,7 +400,6 @@
                 }
             });
             document.getElementById('log-date-picker').value = new Date().toISOString().split('T')[0];
-
             initFirebase();
         };
     </script>
@@ -443,22 +425,21 @@
                 <button onclick="switchPage('goals')" id="nav-goals" class="nav-link text-sm">Focus</button>
                 <button onclick="switchPage('inventory')" id="nav-inventory" class="nav-link text-sm">Vault</button>
             </div>
-            <div class="text-slate-400 font-bold text-[10px] uppercase tracking-widest">Pulse Pro Cloud</div>
         </nav>
 
+        <!-- DASHBOARD PAGE -->
         <div id="page-dashboard" class="space-y-8 animate-in">
             <header class="flex justify-between items-end">
                 <div>
                     <h1 class="text-3xl font-black text-slate-900">Weekly Pulse</h1>
-                    <p class="text-slate-500 font-medium">Auto-saving to cloud...</p>
+                    <p class="text-slate-500 font-medium text-sm">Track your exam preparations.</p>
                 </div>
                 <div id="inventory-badge-container" class="hidden bg-indigo-500 px-4 py-2 rounded-2xl flex items-center gap-3">
                     <span id="inventory-count-badge" class="bg-white text-indigo-600 text-xs px-2 py-0.5 rounded-lg font-black">0</span>
-                    <span class="text-white text-xs font-bold uppercase tracking-widest text-white">Active Units</span>
+                    <span class="text-white text-xs font-bold uppercase tracking-widest">Active Units</span>
                 </div>
             </header>
 
-            <!-- Inputs Section -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div class="card p-6 border-b-8 border-blue-500">
                     <h2 class="font-extrabold text-xl mb-6">Physics ⚛️</h2>
@@ -512,7 +493,6 @@
                 </div>
             </div>
 
-            <!-- Actions -->
             <div class="flex flex-col sm:flex-row gap-4">
                 <div class="flex-1 flex gap-2">
                     <input type="date" id="log-date-picker" class="flex-1 bg-white border border-slate-200 px-4 py-4 rounded-2xl font-bold text-slate-700 outline-none">
@@ -521,10 +501,9 @@
                 <button onclick="resetInputs()" class="bg-slate-200 text-slate-600 font-bold px-8 py-4 rounded-2xl hover:bg-slate-300">Clear</button>
             </div>
 
-            <!-- Analytics -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="card p-6 min-h-[350px] flex flex-col">
-                    <h3 class="font-black text-slate-400 mb-6 uppercase text-[10px] tracking-widest text-center">Subject Distribution (Overall)</h3>
+                    <h3 class="font-black text-slate-400 mb-6 uppercase text-[10px] tracking-widest text-center">Subject Distribution</h3>
                     <div class="flex-1 relative"><canvas id="chart-dist"></canvas></div>
                 </div>
                 <div class="card p-6 min-h-[350px] flex flex-col">
@@ -533,11 +512,10 @@
                 </div>
             </div>
 
-            <!-- History Table -->
             <div class="card overflow-hidden border border-slate-200">
                 <div class="px-6 py-4 font-black flex justify-between border-b border-slate-100 text-sm">
                     Study History 
-                    <span class="text-[10px] text-indigo-400 uppercase">Click row to view/edit</span>
+                    <span class="text-[10px] text-indigo-400 uppercase text-xs">Tap row to reload record</span>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left">
@@ -556,25 +534,27 @@
             </div>
         </div>
 
+        <!-- FOCUS PAGE -->
         <div id="page-goals" class="hidden space-y-6 animate-in">
             <div class="card p-6 bg-indigo-600 text-white shadow-xl">
-                <h3 class="font-black mb-4">🎯 Focus Area</h3>
+                <h3 class="font-black mb-4 uppercase tracking-widest text-xs">🎯 Focus Area</h3>
                 <div class="space-y-4">
-                    <select id="goal-subject" class="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white">
+                    <select id="goal-subject" class="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white outline-none">
                         <option value="Physics">Physics</option>
                         <option value="Combined Maths">Combined Maths</option>
                         <option value="Chemistry">Chemistry</option>
                     </select>
-                    <textarea id="goal-desc" rows="2" class="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white placeholder-white/50" placeholder="Focus..."></textarea>
-                    <button onclick="addGoal()" class="w-full bg-white text-indigo-600 py-3 rounded-xl font-black text-sm">CREATE GOAL</button>
+                    <textarea id="goal-desc" rows="2" class="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white placeholder-white/50 outline-none" placeholder="What is the next milestone?"></textarea>
+                    <button onclick="addGoal()" class="w-full bg-white text-indigo-600 py-4 rounded-xl font-black text-sm hover:bg-slate-100 transition-colors">CREATE GOAL</button>
                 </div>
             </div>
             <div class="space-y-4" id="goals-list"></div>
         </div>
 
+        <!-- VAULT PAGE -->
         <div id="page-inventory" class="hidden space-y-6 animate-in">
             <div class="card p-6 bg-slate-900 text-white shadow-xl">
-                <h3 class="font-black mb-4">📦 Resource Vault</h3>
+                <h3 class="font-black mb-4 uppercase tracking-widest text-xs">📦 Resource Vault</h3>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                     <select id="paper-subject" onchange="updatePaperTypes()" class="p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white">
                         <option value="Physics">Physics</option>
@@ -586,7 +566,7 @@
                         <select id="paper-type" class="flex-1 p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white"></select>
                     </div>
                 </div>
-                <button onclick="addPaperToInventory()" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-black text-sm">ADD TO VAULT</button>
+                <button onclick="addPaperToInventory()" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-black text-sm hover:bg-indigo-400 transition-colors">ADD TO VAULT</button>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="inventory-container"></div>
         </div>
