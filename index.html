@@ -24,23 +24,25 @@
         let inventory = { "Physics": [], "Combined Maths": [], "Chemistry": [] };
         let charts = { dist: null, trend: null };
 
-        const inputs = {
+        // Global references for inputs
+        const getInputs = () => ({
             phyMcq: document.getElementById('input-phy-mcq'),
             phyEssay: document.getElementById('input-phy-essay'),
             pure: document.getElementById('input-pure'),
             applied: document.getElementById('input-applied'),
             chemMcq: document.getElementById('input-chem-mcq'),
             chemEssay: document.getElementById('input-chem-essay')
-        };
+        });
 
-        // Theme
+        // Theme Management
         if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
             document.documentElement.classList.add('dark');
         }
+        
         window.toggleTheme = () => {
             const isDark = document.documentElement.classList.toggle('dark');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            updateCharts(); // Refresh chart colors
+            updateCharts();
         };
 
         const initApp = async () => {
@@ -81,6 +83,7 @@
         };
 
         window.calculateTotals = () => {
+            const inputs = getInputs();
             const p = (parseInt(inputs.phyMcq.value) || 0) + (parseInt(inputs.phyEssay.value) || 0);
             const m = (parseInt(inputs.pure.value) || 0) + (parseInt(inputs.applied.value) || 0);
             const c = (parseInt(inputs.chemMcq.value) || 0) + (parseInt(inputs.chemEssay.value) || 0);
@@ -166,11 +169,18 @@
                 phyTotal: t.p, mathsTotal: t.m, chemTotal: t.c, total: t.p + t.m + t.c, timestamp: Date.now()
             });
             await pushToCloud();
+            window.resetInputs();
+        };
+
+        window.resetInputs = () => {
+            const inputs = getInputs();
             Object.values(inputs).forEach(i => i.value = 0);
             calculateTotals();
+            updateCharts();
         };
 
         window.logFromInventory = async (subject, paper) => {
+            const inputs = getInputs();
             if (subject === "Physics") {
                 if (paper.includes("MCQ")) inputs.phyMcq.value = (parseInt(inputs.phyMcq.value) || 0) + 1;
                 else inputs.phyEssay.value = (parseInt(inputs.phyEssay.value) || 0) + 1;
@@ -221,6 +231,7 @@
 
         function renderHistory() {
             const body = document.getElementById('history-body');
+            if(!body) return;
             body.innerHTML = history.length === 0 ? '<tr><td colspan="5" class="p-12 text-center text-slate-400 italic">No activity logs recorded yet.</td></tr>' :
                 [...history].reverse().map(e => `
                     <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
@@ -235,6 +246,7 @@
 
         function renderGoals() {
             const list = document.getElementById('goals-list');
+            if(!list) return;
             list.innerHTML = goals.length === 0 ? '<div class="p-16 text-center text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-3xl">Set your weekly study targets here.</div>' :
                 goals.map(g => `
                     <div class="card p-5 flex items-center gap-5 group transition-all transform hover:scale-[1.01] ${g.completed ? 'opacity-50 grayscale bg-slate-50/50' : ''}">
@@ -253,6 +265,7 @@
 
         function renderInventory() {
             const container = document.getElementById('inventory-container');
+            if(!container) return;
             container.innerHTML = Object.keys(inventory).map(sub => `
                 <div class="card p-6 border-t-4 ${sub === 'Physics' ? 'border-blue-500' : sub === 'Combined Maths' ? 'border-emerald-500' : 'border-amber-500'}">
                     <h3 class="font-black text-slate-800 dark:text-slate-100 mb-4 text-lg tracking-tight">${sub}</h3>
@@ -271,26 +284,13 @@
             `).join('');
         }
 
-        window.onload = () => {
-            const yearSelect = document.getElementById('paper-year');
-            for (let y = new Date().getFullYear(); y >= 2010; y--) yearSelect.innerHTML += `<option value="${y}">${y}</option>`;
-            
-            window.updatePaperTypes = () => {
-                const sub = document.getElementById('paper-subject').value;
-                const types = sub === 'Combined Maths' ? ['Pure', 'Applied'] : ['MCQ', 'Struct/Essay'];
-                document.getElementById('paper-type').innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join('');
-            };
-            updatePaperTypes();
-            Object.values(inputs).forEach(input => { input.oninput = () => { calculateTotals(); updateCharts(); }; });
-            initApp();
-
-            window.addEventListener('resize', () => { if (charts.dist && charts.trend) updateCharts(); });
-        };
-
         window.switchPage = (pageId) => {
-            ['dashboard', 'goals', 'inventory'].forEach(p => {
-                document.getElementById(`page-${p}`).classList.toggle('hidden', p !== pageId);
-                document.getElementById(`nav-${p}`).classList.toggle('active', p === pageId);
+            const pages = ['dashboard', 'goals', 'inventory'];
+            pages.forEach(p => {
+                const el = document.getElementById(`page-${p}`);
+                const nav = document.getElementById(`nav-${p}`);
+                if (el) el.classList.toggle('hidden', p !== pageId);
+                if (nav) nav.classList.toggle('active', p === pageId);
             });
             window.scrollTo({ top: 0, behavior: 'smooth' });
             if (pageId === 'dashboard') {
@@ -299,13 +299,40 @@
             }
         };
 
+        window.onload = () => {
+            const yearSelect = document.getElementById('paper-year');
+            if (yearSelect) {
+                for (let y = new Date().getFullYear(); y >= 2010; y--) {
+                    const opt = document.createElement('option');
+                    opt.value = y;
+                    opt.textContent = y;
+                    yearSelect.appendChild(opt);
+                }
+            }
+            
+            window.updatePaperTypes = () => {
+                const sub = document.getElementById('paper-subject').value;
+                const types = sub === 'Combined Maths' ? ['Pure', 'Applied'] : ['MCQ', 'Struct/Essay'];
+                document.getElementById('paper-type').innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join('');
+            };
+            updatePaperTypes();
+
+            const inputs = getInputs();
+            Object.values(inputs).forEach(input => { 
+                if(input) input.oninput = () => { calculateTotals(); updateCharts(); }; 
+            });
+            
+            initApp();
+            window.addEventListener('resize', () => { if (charts.dist && charts.trend) updateCharts(); });
+        };
+
     </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
         body { font-family: 'Plus Jakarta Sans', sans-serif; transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1); -webkit-tap-highlight-color: transparent; }
         .card { background: white; border-radius: 1.5rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.04); transition: transform 0.2s ease, box-shadow 0.2s ease; }
         .dark .card { background: #1e293b; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); }
-        .nav-link { position: relative; }
+        .nav-link { position: relative; color: #64748b; }
         .nav-link.active { color: #1e293b; }
         .dark .nav-link.active { color: #f8fafc; }
         .nav-link.active::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 100%; height: 3px; background: #6366f1; border-radius: 99px; }
@@ -315,149 +342,126 @@
         .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
 
         input[type="number"] { font-variant-numeric: tabular-nums; }
-        
-        /* Grid Adjustments for Laptop */
-        @media (min-width: 1024px) {
-            .dashboard-grid { grid-template-columns: repeat(3, 1fr); }
-            .chart-grid { grid-template-columns: repeat(2, 1fr); }
-        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="bg-[#f8fafc] dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen">
 
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-10">
-        <!-- Navigation Bar -->
+    <div class="max-w-4xl mx-auto px-4 py-10">
+        <!-- Navigation -->
         <nav class="sticky top-0 z-50 bg-[#f8fafc]/80 dark:bg-slate-950/80 backdrop-blur-md mb-10 flex justify-between items-center border-b border-slate-200 dark:border-slate-800">
-            <div class="flex gap-6 md:gap-12 overflow-x-auto no-scrollbar py-2">
-                <button onclick="switchPage('dashboard')" id="nav-dashboard" class="nav-link active pb-3 text-sm md:text-base text-slate-400 font-bold transition-all whitespace-nowrap">Home Dashboard</button>
-                <button onclick="switchPage('goals')" id="nav-goals" class="nav-link pb-3 text-sm md:text-base text-slate-400 font-bold transition-all whitespace-nowrap">Weekly Focus</button>
-                <button onclick="switchPage('inventory')" id="nav-inventory" class="nav-link pb-3 text-sm md:text-base text-slate-400 font-bold transition-all whitespace-nowrap">Paper Vault</button>
+            <div class="flex gap-6 overflow-x-auto no-scrollbar py-2">
+                <button onclick="switchPage('dashboard')" id="nav-dashboard" class="nav-link active pb-3 text-sm font-bold transition-all whitespace-nowrap">Dashboard</button>
+                <button onclick="switchPage('goals')" id="nav-goals" class="nav-link pb-3 text-sm font-bold transition-all whitespace-nowrap">Focus</button>
+                <button onclick="switchPage('inventory')" id="nav-inventory" class="nav-link pb-3 text-sm font-bold transition-all whitespace-nowrap">Vault</button>
             </div>
-            <div class="flex items-center gap-4 pb-3">
-                <button onclick="toggleTheme()" class="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-center text-lg">
-                    <span class="dark:hidden">☀️</span><span class="hidden dark:inline">🌙</span>
-                </button>
-            </div>
+            <button onclick="toggleTheme()" class="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700 flex items-center justify-center mb-3">
+                <span class="dark:hidden">☀️</span><span class="hidden dark:inline">🌙</span>
+            </button>
         </nav>
 
-        <!-- Dashboard Page -->
-        <div id="page-dashboard" class="space-y-8 animate-in fade-in duration-500">
-            <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <!-- Dashboard -->
+        <div id="page-dashboard" class="space-y-10 animate-in fade-in duration-500">
+            <header class="flex justify-between items-center">
                 <div>
-                    <h1 class="text-3xl md:text-4xl font-black text-slate-900 dark:text-white tracking-tight">Daily Pulse</h1>
-                    <p class="text-slate-500 font-medium">Synced & Ready across all your devices.</p>
+                    <h1 class="text-3xl font-black text-slate-900 dark:text-white tracking-tight">Weekly Pulse</h1>
+                    <p class="text-slate-500 font-medium">Synced across all your devices.</p>
                 </div>
                 <div id="inventory-badge-container" class="hidden bg-indigo-500 px-4 py-2 rounded-2xl flex items-center gap-3 shadow-lg shadow-indigo-500/20">
-                    <span class="text-white text-xs font-black uppercase tracking-tighter">Current Session</span>
                     <span id="inventory-count-badge" class="bg-white text-indigo-600 text-xs px-2 py-0.5 rounded-lg font-black">0</span>
                 </div>
             </header>
 
-            <!-- Main Input Cards -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="card p-8 border-b-8 border-blue-500 transform hover:-translate-y-1 transition-all">
-                    <div class="flex justify-between items-center mb-6">
-                        <h2 class="font-extrabold text-xl text-slate-800 dark:text-slate-100">Physics</h2>
-                        <span class="bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 p-2 rounded-lg text-lg">⚛️</span>
-                    </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Subject Inputs -->
+                <div class="card p-8 border-b-8 border-blue-500">
+                    <h2 class="font-extrabold text-xl mb-6">Physics ⚛️</h2>
                     <div class="space-y-6">
-                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">MCQ</label><input type="number" id="input-phy-mcq" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-blue-500 outline-none text-right transition-all"></div>
-                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">Essay</label><input type="number" id="input-phy-essay" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-blue-500 outline-none text-right transition-all"></div>
-                        <div class="pt-4 flex justify-between items-center font-black text-blue-500"><span class="text-[10px] opacity-60 uppercase">Cumulative</span><span id="phy-total-display" class="text-lg">0 units</span></div>
+                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">MCQ</label><input type="number" id="input-phy-mcq" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-blue-500 outline-none text-right"></div>
+                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">Essay</label><input type="number" id="input-phy-essay" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-blue-500 outline-none text-right"></div>
+                        <div class="pt-4 flex justify-between font-black text-blue-500 text-sm"><span class="opacity-60">Total</span><span id="phy-total-display">0 units</span></div>
                     </div>
                 </div>
 
-                <div class="card p-8 border-b-8 border-emerald-500 transform hover:-translate-y-1 transition-all">
-                    <div class="flex justify-between items-center mb-6">
-                        <h2 class="font-extrabold text-xl text-slate-800 dark:text-slate-100">Maths</h2>
-                        <span class="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 p-2 rounded-lg text-lg">📐</span>
-                    </div>
+                <div class="card p-8 border-b-8 border-emerald-500">
+                    <h2 class="font-extrabold text-xl mb-6">Maths 📐</h2>
                     <div class="space-y-6">
-                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">Pure</label><input type="number" id="input-pure" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-right transition-all"></div>
-                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">Applied</label><input type="number" id="input-applied" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-right transition-all"></div>
-                        <div class="pt-4 flex justify-between items-center font-black text-emerald-500"><span class="text-[10px] opacity-60 uppercase">Cumulative</span><span id="maths-total-display" class="text-lg">0 units</span></div>
+                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">Pure</label><input type="number" id="input-pure" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-right"></div>
+                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">Applied</label><input type="number" id="input-applied" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none text-right"></div>
+                        <div class="pt-4 flex justify-between font-black text-emerald-500 text-sm"><span class="opacity-60">Total</span><span id="maths-total-display">0 units</span></div>
                     </div>
                 </div>
 
-                <div class="card p-8 border-b-8 border-amber-500 transform hover:-translate-y-1 transition-all md:col-span-2 lg:col-span-1">
-                    <div class="flex justify-between items-center mb-6">
-                        <h2 class="font-extrabold text-xl text-slate-800 dark:text-slate-100">Chemistry</h2>
-                        <span class="bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 p-2 rounded-lg text-lg">🧪</span>
-                    </div>
+                <div class="card p-8 border-b-8 border-amber-500">
+                    <h2 class="font-extrabold text-xl mb-6">Chemistry 🧪</h2>
                     <div class="space-y-6">
-                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">MCQ</label><input type="number" id="input-chem-mcq" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-amber-500 outline-none text-right transition-all"></div>
-                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">Essay</label><input type="number" id="input-chem-essay" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-amber-500 outline-none text-right transition-all"></div>
-                        <div class="pt-4 flex justify-between items-center font-black text-amber-500"><span class="text-[10px] opacity-60 uppercase">Cumulative</span><span id="chem-total-display" class="text-lg">0 units</span></div>
+                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">MCQ</label><input type="number" id="input-chem-mcq" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-amber-500 outline-none text-right"></div>
+                        <div class="flex items-center justify-between"><label class="text-xs font-black text-slate-400 uppercase tracking-widest">Essay</label><input type="number" id="input-chem-essay" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 dark:border-slate-700 focus:border-amber-500 outline-none text-right"></div>
+                        <div class="pt-4 flex justify-between font-black text-amber-500 text-sm"><span class="opacity-60">Total</span><span id="chem-total-display">0 units</span></div>
                     </div>
                 </div>
             </div>
 
-            <button onclick="saveWeekToHistory()" class="group relative w-full overflow-hidden bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-black py-5 rounded-3xl shadow-2xl hover:shadow-indigo-500/20 transition-all active:scale-[0.98]">
-                <span class="relative z-10 flex items-center justify-center gap-2">LOG THIS WEEK <svg class="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg></span>
-            </button>
+            <div class="flex flex-col sm:flex-row gap-4">
+                <button onclick="saveWeekToHistory()" class="flex-1 bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-black py-5 rounded-3xl shadow-xl hover:scale-[1.01] transition-all">Save Week Progress</button>
+                <button onclick="resetInputs()" class="bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold px-8 py-5 rounded-3xl hover:bg-slate-300 dark:hover:bg-slate-700 transition-all">Reset Inputs</button>
+            </div>
 
-            <!-- Chart Visualization -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div class="card p-8 flex flex-col h-[450px]">
-                    <h3 class="font-black text-center text-slate-400 mb-8 uppercase text-[11px] tracking-[0.3em]">Subject Velocity</h3>
-                    <div class="flex-1 relative"><canvas id="chart-dist"></canvas></div>
+            <!-- Charts -->
+            <div class="space-y-8">
+                <div class="card p-8 h-[400px]">
+                    <h3 class="font-black text-center text-slate-400 mb-6 uppercase text-xs tracking-widest">Subject Distribution</h3>
+                    <div class="h-full relative"><canvas id="chart-dist"></canvas></div>
                 </div>
-                <div class="card p-8 flex flex-col h-[450px]">
-                    <h3 class="font-black text-center text-slate-400 mb-8 uppercase text-[11px] tracking-[0.3em]">Consistency Timeline</h3>
-                    <div class="flex-1 relative"><canvas id="chart-trend"></canvas></div>
+                <div class="card p-8 h-[400px]">
+                    <h3 class="font-black text-center text-slate-400 mb-6 uppercase text-xs tracking-widest">Activity Trend</h3>
+                    <div class="h-full relative"><canvas id="chart-trend"></canvas></div>
                 </div>
             </div>
 
-            <!-- Enhanced History Table -->
+            <!-- Sync History -->
             <div class="card overflow-hidden">
-                <div class="p-6 md:p-8 bg-slate-50/50 dark:bg-slate-800/30 flex justify-between items-center border-b border-slate-100 dark:border-slate-800">
-                    <h3 class="font-black text-lg tracking-tight">Sync History</h3>
-                    <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                <div class="p-6 bg-slate-50 dark:bg-slate-800/30 font-black flex justify-between items-center border-b border-slate-100 dark:border-slate-800 text-sm">
+                    Sync History <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left">
-                        <thead class="bg-white dark:bg-slate-900/50 text-[10px] text-slate-400 uppercase font-black tracking-widest">
-                            <tr><th class="px-8 py-5">Timeframe</th><th class="px-6 py-5 text-center">PHY</th><th class="px-6 py-5 text-center">MTH</th><th class="px-6 py-5 text-center">CHM</th><th class="px-8 py-5 text-center">TOTAL</th></tr>
+                        <thead class="bg-white dark:bg-slate-900/50 text-[10px] text-slate-400 uppercase font-black">
+                            <tr><th class="px-6 py-4">Date</th><th class="px-6 py-4 text-center">P</th><th class="px-6 py-4 text-center">M</th><th class="px-6 py-4 text-center">C</th><th class="px-6 py-4 text-center">SUM</th></tr>
                         </thead>
-                        <tbody id="history-body" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+                        <tbody id="history-body" class="divide-y divide-slate-100 dark:divide-slate-800 text-sm"></tbody>
                     </table>
                 </div>
             </div>
         </div>
 
-        <!-- Weekly Goals Page -->
-        <div id="page-goals" class="hidden space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-            <header>
-                <h1 class="text-3xl font-black">Weekly Targets</h1>
-                <p class="text-slate-500 font-medium text-sm">Focus on what matters most this week.</p>
-            </header>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-10">
-                <div class="lg:col-span-1">
-                    <div class="card p-8 sticky top-24 border border-slate-100 dark:border-slate-800">
-                        <h3 class="font-black mb-6 text-slate-800 dark:text-slate-100">Quick Add</h3>
-                        <div class="space-y-6">
-                            <div><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Topic</label><select id="goal-subject" class="w-full p-4 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl text-sm font-bold ring-2 ring-transparent focus:ring-indigo-500 outline-none transition-all"><option>Physics</option><option>Combined Maths</option><option>Chemistry</option><option>General</option></select></div>
-                            <div><label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Description</label><textarea id="goal-desc" rows="4" class="w-full p-4 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl text-sm font-bold ring-2 ring-transparent focus:ring-indigo-500 outline-none transition-all" placeholder="e.g. Solve 2019 Past Paper Part B..."></textarea></div>
-                            <button onclick="addGoal()" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-sm shadow-xl shadow-indigo-500/30 hover:-translate-y-1 active:translate-y-0 transition-all">SET TARGET</button>
-                        </div>
-                    </div>
+        <!-- Weekly Focus -->
+        <div id="page-goals" class="hidden space-y-8 animate-in slide-in-from-bottom-5">
+            <div class="card p-8">
+                <h3 class="font-black mb-6">New Target</h3>
+                <div class="space-y-4">
+                    <select id="goal-subject" class="w-full p-4 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl text-sm font-bold outline-none"><option>Physics</option><option>Combined Maths</option><option>Chemistry</option><option>General</option></select>
+                    <textarea id="goal-desc" rows="3" class="w-full p-4 bg-slate-50 dark:bg-slate-900 border-none rounded-2xl text-sm font-bold outline-none" placeholder="Task description..."></textarea>
+                    <button onclick="addGoal()" class="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-sm">SET TARGET</button>
                 </div>
-                <div class="lg:col-span-2 space-y-4" id="goals-list"></div>
             </div>
+            <div class="space-y-4" id="goals-list"></div>
         </div>
 
-        <!-- Inventory Page -->
-        <div id="page-inventory" class="hidden space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-            <header><h1 class="text-3xl font-black text-slate-900 dark:text-white">Paper Repository</h1></header>
+        <!-- Paper Vault -->
+        <div id="page-inventory" class="hidden space-y-8 animate-in slide-in-from-bottom-5">
             <div class="card p-8 bg-indigo-600">
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 items-end">
-                    <div><label class="text-[10px] font-black text-indigo-200 uppercase tracking-widest block mb-2">Select Subject</label><select id="paper-subject" onchange="updatePaperTypes()" class="w-full p-3.5 bg-white/10 text-white border-2 border-white/20 rounded-2xl text-sm font-bold outline-none focus:border-white transition-all"><option class="text-slate-900">Physics</option><option class="text-slate-900">Combined Maths</option><option class="text-slate-900">Chemistry</option></select></div>
-                    <div><label class="text-[10px] font-black text-indigo-200 uppercase tracking-widest block mb-2">Year</label><select id="paper-year" class="w-full p-3.5 bg-white/10 text-white border-2 border-white/20 rounded-2xl text-sm font-bold outline-none focus:border-white transition-all"></select></div>
-                    <div><label class="text-[10px] font-black text-indigo-200 uppercase tracking-widest block mb-2">Paper Part</label><select id="paper-type" class="w-full p-3.5 bg-white/10 text-white border-2 border-white/20 rounded-2xl text-sm font-bold outline-none focus:border-white transition-all"></select></div>
-                    <button onclick="addPaperToInventory()" class="bg-white text-indigo-600 px-6 py-3.5 rounded-2xl font-black text-sm shadow-xl hover:scale-105 active:scale-95 transition-all">COLLECT PAPER</button>
+                <div class="space-y-4">
+                    <select id="paper-subject" onchange="updatePaperTypes()" class="w-full p-4 bg-white/10 text-white border-2 border-white/20 rounded-2xl text-sm font-bold outline-none focus:border-white transition-all"><option class="text-slate-900">Physics</option><option class="text-slate-900">Combined Maths</option><option class="text-slate-900">Chemistry</option></select>
+                    <div class="flex gap-4">
+                        <select id="paper-year" class="flex-1 p-4 bg-white/10 text-white border-2 border-white/20 rounded-2xl text-sm font-bold outline-none focus:border-white"></select>
+                        <select id="paper-type" class="flex-1 p-4 bg-white/10 text-white border-2 border-white/20 rounded-2xl text-sm font-bold outline-none focus:border-white"></select>
+                    </div>
+                    <button onclick="addPaperToInventory()" class="w-full bg-white text-indigo-600 py-4 rounded-2xl font-black text-sm">COLLECT PAPER</button>
                 </div>
             </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8" id="inventory-container"></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="inventory-container"></div>
         </div>
     </div>
 </body>
