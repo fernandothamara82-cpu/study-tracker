@@ -7,26 +7,17 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script type="module">
-        // Firebase Integration
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // SAFETY CHECK
-        let firebaseConfig = {};
-        try {
-            firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        } catch (e) {
-            console.error("Firebase config missing.");
-        }
-
+        // Global State
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'study-tracker-v2';
-
-        let app, auth, db;
-        let currentUser = null;
+        let db, auth, currentUser = null;
         let history = [];
         let goals = [];
         let inventory = { "Physics": [], "Combined Maths": [], "Chemistry": [] };
+        // currentProgress stores the values currently in the input boxes
         let currentProgress = { phyMcq: 0, phyEssay: 0, pure: 0, applied: 0, chemMcq: 0, chemEssay: 0 };
         let charts = { dist: null, trend: null };
 
@@ -39,69 +30,101 @@
             chemEssay: document.getElementById('input-chem-essay')
         });
 
-        const initApp = async () => {
-            if (!firebaseConfig.apiKey) return;
-            app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
+        // Initialize Firebase and Auth
+        async function initFirebase() {
             try {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
                     await signInAnonymously(auth);
                 }
-            } catch (err) { console.error("Auth error:", err); }
-            onAuthStateChanged(auth, (user) => {
-                if (user) {
-                    currentUser = user;
-                    setupDataSync();
-                }
-            });
-        };
 
-        const setupDataSync = () => {
-            if (!currentUser || !db) return;
-            const userDocRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'appData', 'state');
-            onSnapshot(userDocRef, (docSnap) => {
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUser = user;
+                        startSync();
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+            }
+        }
+
+        // Real-time sync from Firestore
+        function startSync() {
+            if (!currentUser) return;
+            const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'appData', 'state');
+            onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     history = data.history || [];
                     goals = data.goals || [];
                     inventory = data.inventory || { "Physics": [], "Combined Maths": [], "Chemistry": [] };
-                    if (data.currentProgress) {
-                        currentProgress = data.currentProgress;
-                        const inputs = getInputs();
-                        Object.keys(currentProgress).forEach(key => {
-                            if (inputs[key]) inputs[key].value = currentProgress[key];
-                        });
-                    }
+                    currentProgress = data.currentProgress || currentProgress;
+                    
+                    syncInputsToState();
                     renderHistory();
                     renderGoals();
                     renderInventory();
                     calculateTotals();
                     updateCharts();
                 }
-            }, (e) => console.error("Sync Error", e));
-        };
+            }, (error) => console.error("Firestore sync error:", error));
+        }
 
-        const pushToCloud = async () => {
-            if (!currentUser || !db) return;
-            const userDocRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'appData', 'state');
-            await setDoc(userDocRef, { history, goals, inventory, currentProgress, lastUpdated: Date.now() });
+        async function pushData() {
+            if (!currentUser) return;
+            const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'appData', 'state');
+            try {
+                await setDoc(docRef, {
+                    history,
+                    goals,
+                    inventory,
+                    currentProgress,
+                    lastUpdated: Date.now()
+                });
+            } catch (error) {
+                console.error("Failed to save data:", error);
+            }
+        }
+
+        function syncInputsToState() {
+            const inputs = getInputs();
+            Object.keys(currentProgress).forEach(key => {
+                if (inputs[key]) inputs[key].value = currentProgress[key];
+            });
+        }
+
+        window.handleInputChange = (e) => {
+            const inputs = getInputs();
+            if (e && e.target && e.target.value < 0) {
+                e.target.value = 0;
+            }
+
+            Object.keys(currentProgress).forEach(key => {
+                currentProgress[key] = Math.max(0, parseInt(inputs[key].value) || 0);
+            });
+            calculateTotals();
+            updateCharts();
+            pushData();
         };
 
         window.calculateTotals = () => {
             const inputs = getInputs();
             if (!inputs.phyMcq) return { p: 0, m: 0, c: 0 };
-            Object.keys(currentProgress).forEach(key => {
-                currentProgress[key] = parseInt(inputs[key].value) || 0;
-            });
-            const p = currentProgress.phyMcq + currentProgress.phyEssay;
-            const m = currentProgress.pure + currentProgress.applied;
-            const c = currentProgress.chemMcq + currentProgress.chemEssay;
+            const p = (parseInt(inputs.phyMcq.value) || 0) + (parseInt(inputs.phyEssay.value) || 0);
+            const m = (parseInt(inputs.pure.value) || 0) + (parseInt(inputs.applied.value) || 0);
+            const c = (parseInt(inputs.chemMcq.value) || 0) + (parseInt(inputs.chemEssay.value) || 0);
+            
             document.getElementById('phy-total-display').innerText = `${p} units`;
             document.getElementById('maths-total-display').innerText = `${m} units`;
             document.getElementById('chem-total-display').innerText = `${c} units`;
+            
             const total = p + m + c;
             const badge = document.getElementById('inventory-badge-container');
             const countBadge = document.getElementById('inventory-count-badge');
@@ -112,20 +135,24 @@
             return { p, m, c };
         };
 
-        window.handleInputChange = () => {
-            calculateTotals();
-            updateCharts();
-            pushToCloud();
-        };
-
         window.updateCharts = () => {
             const distCtx = document.getElementById('chart-dist')?.getContext('2d');
             const trendCtx = document.getElementById('chart-trend')?.getContext('2d');
             if (!distCtx || !trendCtx) return;
 
-            const totals = calculateTotals();
-            const textColor = '#64748b';
-            const gridColor = 'rgba(0,0,0,0.05)';
+            // Subject Distribution - ALWAYS FROM TOTAL DATA (History + Current)
+            let totalP = 0, totalM = 0, totalC = 0;
+            history.forEach(h => {
+                totalP += h.phyTotal || 0;
+                totalM += h.mathsTotal || 0;
+                totalC += h.chemTotal || 0;
+            });
+            
+            // Add current session values to the distribution
+            const current = calculateTotals();
+            totalP += current.p;
+            totalM += current.m;
+            totalC += current.c;
 
             if (charts.dist) charts.dist.destroy();
             charts.dist = new Chart(distCtx, {
@@ -133,9 +160,8 @@
                 data: {
                     labels: ['Physics', 'Maths', 'Chemistry'],
                     datasets: [{
-                        data: [totals.p, totals.m, totals.c],
+                        data: [totalP, totalM, totalC],
                         backgroundColor: ['#3b82f6', '#10b981', '#f59e0b'],
-                        hoverOffset: 10,
                         borderWidth: 0
                     }]
                 },
@@ -143,82 +169,105 @@
                     cutout: '75%', 
                     maintainAspectRatio: false, 
                     plugins: { 
-                        legend: { 
-                            position: 'bottom',
-                            labels: { color: textColor, padding: 20, font: { weight: 'bold' } } 
-                        } 
+                        legend: { position: 'bottom' },
+                        title: { display: true, text: 'Overall Distribution', font: { weight: '800' } }
                     } 
                 }
             });
 
+            // Activity Trend
             if (charts.trend) charts.trend.destroy();
+            const sortedHistory = [...history].sort((a, b) => a.timestamp - b.timestamp);
             charts.trend = new Chart(trendCtx, {
                 type: 'line',
                 data: {
-                    labels: history.slice(-7).map(x => x.date),
+                    labels: sortedHistory.slice(-10).map(x => x.date),
                     datasets: [{
-                        label: 'Weekly Effort',
-                        data: history.slice(-7).map(x => x.total),
+                        label: 'Total Units',
+                        data: sortedHistory.slice(-10).map(x => x.total),
                         borderColor: '#6366f1',
                         backgroundColor: 'rgba(99, 102, 241, 0.05)',
                         fill: true,
-                        tension: 0.4,
-                        pointRadius: 4,
-                        pointBackgroundColor: '#6366f1'
+                        tension: 0.4
                     }]
                 },
-                options: { 
-                    maintainAspectRatio: false, 
-                    scales: { 
-                        y: { 
-                            beginAtZero: true,
-                            grid: { color: gridColor }, 
-                            ticks: { color: textColor, font: { weight: 'bold' } } 
-                        },
-                        x: { 
-                            grid: { display: false }, 
-                            ticks: { color: textColor, font: { weight: 'bold' } } 
-                        }
-                    },
-                    plugins: { legend: { display: false } }
-                }
+                options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
             });
+        };
+
+        // Function to load historical data back into inputs
+        window.loadHistoricalRecord = (timestamp) => {
+            const record = history.find(h => h.timestamp === timestamp);
+            if (!record) return;
+
+            // Update UI components
+            document.getElementById('log-date-picker').value = new Date(timestamp).toISOString().split('T')[0];
+            
+            // Map the simplified totals back to detail inputs 
+            // (Note: Since we only save totals, we distribute them simply or just show the primary state)
+            // To make this accurate, we'd need to save mcq/essay separately in history too.
+            // For now, we'll populate the state if it exists, otherwise use totals
+            currentProgress.phyMcq = record.phyMcq || record.phyTotal || 0;
+            currentProgress.phyEssay = record.phyEssay || 0;
+            currentProgress.pure = record.pure || record.mathsTotal || 0;
+            currentProgress.applied = record.applied || 0;
+            currentProgress.chemMcq = record.chemMcq || record.chemTotal || 0;
+            currentProgress.chemEssay = record.chemEssay || 0;
+
+            syncInputsToState();
+            calculateTotals();
+            updateCharts();
+            
+            // Scroll to top to see pulse
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         };
 
         window.saveWeekToHistory = async () => {
             const t = calculateTotals();
             if (t.p + t.m + t.c === 0) return;
-            history.push({
-                date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                phyTotal: t.p, mathsTotal: t.m, chemTotal: t.c, total: t.p + t.m + t.c, timestamp: Date.now()
-            });
+            
+            const dateInput = document.getElementById('log-date-picker').value;
+            const logDate = dateInput ? new Date(dateInput) : new Date();
+            // Using a standard ISO-like string for ID to avoid local format issues
+            const dateStr = logDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            
+            const existingIndex = history.findIndex(h => h.date === dateStr);
+            
+            const recordData = {
+                date: dateStr,
+                phyTotal: t.p,
+                mathsTotal: t.m,
+                chemTotal: t.c,
+                // Saving individual fields for precise reloading later
+                phyMcq: currentProgress.phyMcq,
+                phyEssay: currentProgress.phyEssay,
+                pure: currentProgress.pure,
+                applied: currentProgress.applied,
+                chemMcq: currentProgress.chemMcq,
+                chemEssay: currentProgress.chemEssay,
+                total: t.p + t.m + t.c,
+                timestamp: logDate.getTime()
+            };
+
+            if (existingIndex !== -1) {
+                history[existingIndex] = recordData;
+            } else {
+                history.push(recordData);
+            }
+            
+            // Optional: reset after save? Or keep for editing? 
+            // Users usually want to clear after archiving a successful week.
             Object.keys(currentProgress).forEach(key => currentProgress[key] = 0);
-            await pushToCloud();
-            window.resetInputs();
-            renderHistory();
+            await pushData();
+            syncInputsToState();
         };
 
         window.resetInputs = () => {
-            const inputs = getInputs();
-            Object.values(inputs).forEach(i => { if(i) i.value = 0; });
+            Object.keys(currentProgress).forEach(key => currentProgress[key] = 0);
+            syncInputsToState();
             calculateTotals();
             updateCharts();
-            pushToCloud();
-        };
-
-        window.logFromInventory = async (subject, paper) => {
-            const inputs = getInputs();
-            if (subject === "Physics") {
-                if (paper.includes("MCQ")) inputs.phyMcq.value = (parseInt(inputs.phyMcq.value) || 0) + 1;
-                else inputs.phyEssay.value = (parseInt(inputs.phyEssay.value) || 0) + 1;
-            } else if (subject === "Combined Maths") {
-                if (paper.includes("Pure")) inputs.pure.value = (parseInt(inputs.pure.value) || 0) + 1;
-                else inputs.applied.value = (parseInt(inputs.applied.value) || 0) + 1;
-            } else if (subject === "Chemistry") {
-                if (paper.includes("MCQ")) inputs.chemMcq.value = (parseInt(inputs.chemMcq.value) || 0) + 1;
-                else inputs.chemEssay.value = (parseInt(inputs.chemEssay.value) || 0) + 1;
-            }
-            handleInputChange();
+            pushData();
         };
 
         window.addGoal = async () => {
@@ -228,20 +277,20 @@
             goals.push({ id: Date.now(), subject, text, completed: false });
             document.getElementById('goal-desc').value = '';
             renderGoals();
-            await pushToCloud();
+            await pushData();
         };
 
         window.toggleGoal = async (id) => {
             const g = goals.find(x => x.id === id);
             if (g) g.completed = !g.completed;
             renderGoals();
-            await pushToCloud();
+            await pushData();
         };
 
         window.deleteGoal = async (id) => {
             goals = goals.filter(x => x.id !== id);
             renderGoals();
-            await pushToCloud();
+            await pushData();
         };
 
         window.addPaperToInventory = async () => {
@@ -252,23 +301,40 @@
             if (!inventory[subject].includes(entry)) {
                 inventory[subject].push(entry);
                 renderInventory();
-                await pushToCloud();
+                await pushData();
             }
         };
 
         window.removePaper = async (sub, idx) => {
             inventory[sub].splice(idx, 1);
             renderInventory();
-            await pushToCloud();
+            await pushData();
+        };
+
+        window.logFromInventory = async (subject, paper) => {
+            const inputs = getInputs();
+            if (subject === "Physics") {
+                if (paper.includes("MCQ")) currentProgress.phyMcq++;
+                else currentProgress.phyEssay++;
+            } else if (subject === "Combined Maths") {
+                if (paper.includes("Pure")) currentProgress.pure++;
+                else currentProgress.applied++;
+            } else if (subject === "Chemistry") {
+                if (paper.includes("MCQ")) currentProgress.chemMcq++;
+                else currentProgress.chemEssay++;
+            }
+            syncInputsToState();
+            handleInputChange();
         };
 
         window.renderHistory = () => {
             const body = document.getElementById('history-body');
             if(!body) return;
-            body.innerHTML = history.length === 0 ? '<tr><td colspan="5" class="p-12 text-center text-slate-400 italic">No activity logs.</td></tr>' :
-                [...history].reverse().map(e => `
-                    <tr class="hover:bg-slate-50 transition-colors">
-                        <td class="px-6 py-4 font-semibold text-slate-600 text-sm">${e.date}</td>
+            const sortedHistory = [...history].sort((a, b) => b.timestamp - a.timestamp);
+            body.innerHTML = sortedHistory.length === 0 ? '<tr><td colspan="5" class="p-12 text-center text-slate-400 italic">No activity logs.</td></tr>' :
+                sortedHistory.map(e => `
+                    <tr onclick="loadHistoricalRecord(${e.timestamp})" class="hover:bg-indigo-50 cursor-pointer transition-colors group">
+                        <td class="px-6 py-4 font-semibold text-slate-600 text-sm group-hover:text-indigo-600">${e.date}</td>
                         <td class="px-6 py-4 text-center font-bold text-blue-500">${e.phyTotal}</td>
                         <td class="px-6 py-4 text-center font-bold text-emerald-500">${e.mathsTotal}</td>
                         <td class="px-6 py-4 text-center font-bold text-amber-500">${e.chemTotal}</td>
@@ -316,8 +382,10 @@
 
         window.switchPage = (pageId) => {
             ['dashboard', 'goals', 'inventory'].forEach(p => {
-                document.getElementById(`page-${p}`).classList.toggle('hidden', p !== pageId);
-                document.getElementById(`nav-${p}`).classList.toggle('active', p === pageId);
+                const el = document.getElementById(`page-${p}`);
+                const nav = document.getElementById(`nav-${p}`);
+                if (el) el.classList.toggle('hidden', p !== pageId);
+                if (nav) nav.classList.toggle('active', p === pageId);
             });
             if (pageId === 'dashboard') {
                 calculateTotals();
@@ -331,6 +399,7 @@
                 const opt = document.createElement('option');
                 opt.value = y; opt.textContent = y; yearSelect.appendChild(opt);
             }
+            
             window.updatePaperTypes = () => {
                 const sub = document.getElementById('paper-subject').value;
                 const types = sub === 'Combined Maths' ? ['Pure', 'Applied'] : ['MCQ', 'Struct/Essay'];
@@ -340,126 +409,122 @@
 
             const inputs = getInputs();
             Object.values(inputs).forEach(input => { 
-                if(input) input.oninput = handleInputChange; 
+                if(input) {
+                    input.oninput = (e) => handleInputChange(e);
+                    input.onkeydown = (e) => {
+                        if (["e", "E", "+", "-"].includes(e.key)) e.preventDefault();
+                    };
+                }
             });
-            initApp();
-            renderHistory();
-            renderGoals();
-            renderInventory();
-            updateCharts();
+            document.getElementById('log-date-picker').value = new Date().toISOString().split('T')[0];
+
+            initFirebase();
         };
     </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
         body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; color: #0f172a; }
-        .card { background: white; border-radius: 1.5rem; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); }
-        .nav-link { position: relative; color: #64748b; font-weight: 700; cursor: pointer; transition: color 0.3s ease; }
+        .card { background: white; border-radius: 1.5rem; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1); }
+        .nav-link { position: relative; color: #64748b; font-weight: 700; cursor: pointer; }
         .nav-link.active { color: #1e293b; }
         .nav-link.active::after { content: ''; position: absolute; bottom: -4px; left: 0; width: 100%; height: 3px; background: #6366f1; border-radius: 99px; }
         .custom-scrollbar::-webkit-scrollbar { width: 5px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        input[type="number"] { -moz-appearance: textfield; }
-        input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         .animate-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        select option { color: #0f172a !important; background: white !important; }
     </style>
 </head>
 <body class="min-h-screen pb-20">
-
     <div class="max-w-4xl mx-auto px-4 py-8">
-        <!-- Navigation -->
         <nav class="sticky top-0 z-50 bg-slate-50/80 backdrop-blur-md mb-8 flex justify-between items-center border-b border-slate-200">
             <div class="flex gap-6 py-4">
-                <button type="button" onclick="switchPage('dashboard')" id="nav-dashboard" class="nav-link active text-sm">Dashboard</button>
-                <button type="button" onclick="switchPage('goals')" id="nav-goals" class="nav-link text-sm">Focus</button>
-                <button type="button" onclick="switchPage('inventory')" id="nav-inventory" class="nav-link text-sm">Vault</button>
+                <button onclick="switchPage('dashboard')" id="nav-dashboard" class="nav-link active text-sm">Dashboard</button>
+                <button onclick="switchPage('goals')" id="nav-goals" class="nav-link text-sm">Focus</button>
+                <button onclick="switchPage('inventory')" id="nav-inventory" class="nav-link text-sm">Vault</button>
             </div>
-            <div class="flex items-center gap-2 text-slate-400 font-bold text-[10px] uppercase tracking-widest">
-                Pulse v2.0
-            </div>
+            <div class="text-slate-400 font-bold text-[10px] uppercase tracking-widest">Pulse Pro Cloud</div>
         </nav>
 
-        <!-- Dashboard -->
         <div id="page-dashboard" class="space-y-8 animate-in">
             <header class="flex justify-between items-end">
                 <div>
-                    <h1 class="text-3xl font-black tracking-tight text-slate-900">Weekly Pulse</h1>
-                    <p class="text-slate-500 font-medium">Tracking your effort in real-time.</p>
+                    <h1 class="text-3xl font-black text-slate-900">Weekly Pulse</h1>
+                    <p class="text-slate-500 font-medium">Auto-saving to cloud...</p>
                 </div>
-                <div id="inventory-badge-container" class="hidden bg-indigo-500 px-4 py-2 rounded-2xl flex items-center gap-3 shadow-lg shadow-indigo-500/20">
+                <div id="inventory-badge-container" class="hidden bg-indigo-500 px-4 py-2 rounded-2xl flex items-center gap-3">
                     <span id="inventory-count-badge" class="bg-white text-indigo-600 text-xs px-2 py-0.5 rounded-lg font-black">0</span>
-                    <span class="text-white text-xs font-bold uppercase tracking-widest">Active Units</span>
+                    <span class="text-white text-xs font-bold uppercase tracking-widest text-white">Active Units</span>
                 </div>
             </header>
 
+            <!-- Inputs Section -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <!-- Physics Card -->
                 <div class="card p-6 border-b-8 border-blue-500">
                     <h2 class="font-extrabold text-xl mb-6">Physics ⚛️</h2>
                     <div class="space-y-4">
                         <div class="flex justify-between items-center">
                             <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest">MCQ Papers</label>
-                            <input type="number" id="input-phy-mcq" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 focus:border-blue-500 outline-none text-right">
+                            <input type="number" id="input-phy-mcq" value="0" min="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 outline-none text-right">
                         </div>
                         <div class="flex justify-between items-center">
                             <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Essay Papers</label>
-                            <input type="number" id="input-phy-essay" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 focus:border-blue-500 outline-none text-right">
+                            <input type="number" id="input-phy-essay" value="0" min="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 outline-none text-right">
                         </div>
                         <div class="pt-4 flex justify-between font-black text-blue-500 text-[10px] uppercase tracking-wider">
-                            <span>Weekly Progress</span>
-                            <span id="phy-total-display">0 units</span>
+                            <span>Weekly Progress</span> <span id="phy-total-display">0 units</span>
                         </div>
                     </div>
                 </div>
 
-                <!-- Maths Card -->
                 <div class="card p-6 border-b-8 border-emerald-500">
                     <h2 class="font-extrabold text-xl mb-6">Maths 📐</h2>
                     <div class="space-y-4">
                         <div class="flex justify-between items-center">
                             <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pure Maths</label>
-                            <input type="number" id="input-pure" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 focus:border-emerald-500 outline-none text-right">
+                            <input type="number" id="input-pure" value="0" min="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 outline-none text-right">
                         </div>
                         <div class="flex justify-between items-center">
                             <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Applied Maths</label>
-                            <input type="number" id="input-applied" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 focus:border-emerald-500 outline-none text-right">
+                            <input type="number" id="input-applied" value="0" min="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 outline-none text-right">
                         </div>
                         <div class="pt-4 flex justify-between font-black text-emerald-500 text-[10px] uppercase tracking-wider">
-                            <span>Weekly Progress</span>
-                            <span id="maths-total-display">0 units</span>
+                            <span>Weekly Progress</span> <span id="maths-total-display">0 units</span>
                         </div>
                     </div>
                 </div>
 
-                <!-- Chemistry Card -->
                 <div class="card p-6 border-b-8 border-amber-500">
                     <h2 class="font-extrabold text-xl mb-6">Chemistry 🧪</h2>
                     <div class="space-y-4">
                         <div class="flex justify-between items-center">
                             <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest">MCQ Papers</label>
-                            <input type="number" id="input-chem-mcq" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 focus:border-amber-500 outline-none text-right">
+                            <input type="number" id="input-chem-mcq" value="0" min="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 outline-none text-right">
                         </div>
                         <div class="flex justify-between items-center">
                             <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Essay Papers</label>
-                            <input type="number" id="input-chem-essay" value="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 focus:border-amber-500 outline-none text-right">
+                            <input type="number" id="input-chem-essay" value="0" min="0" class="text-2xl font-black w-16 bg-transparent border-b-2 border-slate-200 outline-none text-right">
                         </div>
                         <div class="pt-4 flex justify-between font-black text-amber-500 text-[10px] uppercase tracking-wider">
-                            <span>Weekly Progress</span>
-                            <span id="chem-total-display">0 units</span>
+                            <span>Weekly Progress</span> <span id="chem-total-display">0 units</span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="flex gap-4">
-                <button type="button" onclick="saveWeekToHistory()" class="flex-1 bg-slate-900 text-white font-black py-4 rounded-2xl shadow-lg hover:scale-[1.01] active:scale-[0.98] transition-all">Archive Current Week</button>
-                <button type="button" onclick="resetInputs()" class="bg-slate-200 text-slate-600 font-bold px-6 py-4 rounded-2xl hover:bg-slate-300 transition-all">Clear Form</button>
+            <!-- Actions -->
+            <div class="flex flex-col sm:flex-row gap-4">
+                <div class="flex-1 flex gap-2">
+                    <input type="date" id="log-date-picker" class="flex-1 bg-white border border-slate-200 px-4 py-4 rounded-2xl font-bold text-slate-700 outline-none">
+                    <button onclick="saveWeekToHistory()" class="flex-[2] bg-slate-900 text-white font-black py-4 rounded-2xl shadow-lg hover:bg-slate-800 transition-all">Archive Progress</button>
+                </div>
+                <button onclick="resetInputs()" class="bg-slate-200 text-slate-600 font-bold px-8 py-4 rounded-2xl hover:bg-slate-300">Clear</button>
             </div>
 
-            <!-- Charts Container -->
+            <!-- Analytics -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="card p-6 min-h-[350px] flex flex-col">
-                    <h3 class="font-black text-slate-400 mb-6 uppercase text-[10px] tracking-widest text-center">Subject Distribution</h3>
+                    <h3 class="font-black text-slate-400 mb-6 uppercase text-[10px] tracking-widest text-center">Subject Distribution (Overall)</h3>
                     <div class="flex-1 relative"><canvas id="chart-dist"></canvas></div>
                 </div>
                 <div class="card p-6 min-h-[350px] flex flex-col">
@@ -468,21 +533,21 @@
                 </div>
             </div>
 
-            <!-- History Section -->
+            <!-- History Table -->
             <div class="card overflow-hidden border border-slate-200">
-                <div class="px-6 py-4 font-black flex justify-between items-center border-b border-slate-100 text-sm">
-                    Study Logs
-                    <span class="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded">CLOUD SYNCED</span>
+                <div class="px-6 py-4 font-black flex justify-between border-b border-slate-100 text-sm">
+                    Study History 
+                    <span class="text-[10px] text-indigo-400 uppercase">Click row to view/edit</span>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left">
                         <thead class="bg-slate-50/50 text-[10px] text-slate-400 uppercase font-black">
                             <tr>
-                                <th class="px-6 py-3">Week Ending</th>
+                                <th class="px-6 py-3">Date</th>
                                 <th class="px-6 py-3 text-center">Physics</th>
                                 <th class="px-6 py-3 text-center">Maths</th>
                                 <th class="px-6 py-3 text-center">Chem</th>
-                                <th class="px-6 py-3 text-center">Total Units</th>
+                                <th class="px-6 py-3 text-center">Total</th>
                             </tr>
                         </thead>
                         <tbody id="history-body" class="divide-y divide-slate-100 text-sm"></tbody>
@@ -491,40 +556,37 @@
             </div>
         </div>
 
-        <!-- Goals Section -->
         <div id="page-goals" class="hidden space-y-6 animate-in">
-            <div class="card p-6 bg-indigo-600 text-white shadow-xl shadow-indigo-500/20">
-                <h3 class="font-black mb-4 flex items-center gap-2"><span>🎯</span> Set Weekly Targets</h3>
+            <div class="card p-6 bg-indigo-600 text-white shadow-xl">
+                <h3 class="font-black mb-4">🎯 Focus Area</h3>
                 <div class="space-y-4">
-                    <select id="goal-subject" class="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold outline-none text-white focus:bg-white/20">
-                        <option class="text-slate-900">Physics</option>
-                        <option class="text-slate-900">Combined Maths</option>
-                        <option class="text-slate-900">Chemistry</option>
-                        <option class="text-slate-900">General Study</option>
+                    <select id="goal-subject" class="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white">
+                        <option value="Physics">Physics</option>
+                        <option value="Combined Maths">Combined Maths</option>
+                        <option value="Chemistry">Chemistry</option>
                     </select>
-                    <textarea id="goal-desc" rows="2" class="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold outline-none placeholder-white/50 text-white focus:bg-white/20" placeholder="Describe your focus area..."></textarea>
-                    <button type="button" onclick="addGoal()" class="w-full bg-white text-indigo-600 py-3 rounded-xl font-black text-sm hover:bg-indigo-50 transition-colors shadow-lg">CREATE GOAL</button>
+                    <textarea id="goal-desc" rows="2" class="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white placeholder-white/50" placeholder="Focus..."></textarea>
+                    <button onclick="addGoal()" class="w-full bg-white text-indigo-600 py-3 rounded-xl font-black text-sm">CREATE GOAL</button>
                 </div>
             </div>
             <div class="space-y-4" id="goals-list"></div>
         </div>
 
-        <!-- Inventory Section -->
         <div id="page-inventory" class="hidden space-y-6 animate-in">
             <div class="card p-6 bg-slate-900 text-white shadow-xl">
-                <h3 class="font-black mb-4 flex items-center gap-2"><span>📦</span> Resource Vault</h3>
+                <h3 class="font-black mb-4">📦 Resource Vault</h3>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                    <select id="paper-subject" onchange="updatePaperTypes()" class="p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold outline-none focus:bg-white/20">
-                        <option class="text-slate-900">Physics</option>
-                        <option class="text-slate-900">Combined Maths</option>
-                        <option class="text-slate-900">Chemistry</option>
+                    <select id="paper-subject" onchange="updatePaperTypes()" class="p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white">
+                        <option value="Physics">Physics</option>
+                        <option value="Combined Maths">Combined Maths</option>
+                        <option value="Chemistry">Chemistry</option>
                     </select>
                     <div class="flex gap-2">
-                        <select id="paper-year" class="flex-1 p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold outline-none focus:bg-white/20"></select>
-                        <select id="paper-type" class="flex-1 p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold outline-none focus:bg-white/20"></select>
+                        <select id="paper-year" class="flex-1 p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white"></select>
+                        <select id="paper-type" class="flex-1 p-3 bg-white/10 border border-white/20 rounded-xl text-sm font-bold text-white"></select>
                     </div>
                 </div>
-                <button type="button" onclick="addPaperToInventory()" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-black text-sm hover:bg-indigo-400 transition-colors">ADD TO COLLECTION</button>
+                <button onclick="addPaperToInventory()" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-black text-sm">ADD TO VAULT</button>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="inventory-container"></div>
         </div>
