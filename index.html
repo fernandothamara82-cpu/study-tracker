@@ -63,11 +63,13 @@
             onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
+                    // Update global state
                     history = data.history || [];
                     goals = data.goals || [];
                     inventory = data.inventory || { "Physics": [], "Combined Maths": [], "Chemistry": [] };
                     currentProgress = data.currentProgress || currentProgress;
                     
+                    // Render UI with new state
                     syncInputsToState();
                     renderHistory();
                     renderGoals();
@@ -82,6 +84,7 @@
             if (!currentUser) return;
             const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'appData', 'state');
             try {
+                // Ensure we save the latest global state variables
                 await setDoc(docRef, {
                     history,
                     goals,
@@ -122,9 +125,13 @@
             const m = (parseInt(inputs.pure.value) || 0) + (parseInt(inputs.applied.value) || 0);
             const c = (parseInt(inputs.chemMcq.value) || 0) + (parseInt(inputs.chemEssay.value) || 0);
             
-            document.getElementById('phy-total-display').innerText = `${p} units`;
-            document.getElementById('maths-total-display').innerText = `${m} units`;
-            document.getElementById('chem-total-display').innerText = `${c} units`;
+            const pDisplay = document.getElementById('phy-total-display');
+            const mDisplay = document.getElementById('maths-total-display');
+            const cDisplay = document.getElementById('chem-total-display');
+            
+            if (pDisplay) pDisplay.innerText = `${p} units`;
+            if (mDisplay) mDisplay.innerText = `${m} units`;
+            if (cDisplay) cDisplay.innerText = `${c} units`;
             
             const total = p + m + c;
             const badge = document.getElementById('inventory-badge-container');
@@ -254,21 +261,24 @@
             pushData();
         };
 
+        // GOAL LOGIC FIXES
         window.addGoal = async () => {
             const subject = document.getElementById('goal-subject').value;
             const text = document.getElementById('goal-desc').value.trim();
             if (!text) return;
             goals.push({ id: Date.now(), subject, text, completed: false });
             document.getElementById('goal-desc').value = '';
-            renderGoals();
-            await pushData();
+            renderGoals(); // Update UI immediately
+            await pushData(); // Persist to database
         };
 
         window.toggleGoal = async (id) => {
             const g = goals.find(x => x.id === id);
-            if (g) g.completed = !g.completed;
-            renderGoals();
-            await pushData();
+            if (g) {
+                g.completed = !g.completed;
+                renderGoals();
+                await pushData();
+            }
         };
 
         window.deleteGoal = async (id) => {
@@ -332,12 +342,12 @@
             list.innerHTML = goals.length === 0 ? '<div class="p-16 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-3xl">Set targets.</div>' :
                 goals.map(g => `
                     <div class="card p-5 flex items-center gap-5 ${g.completed ? 'opacity-50 grayscale bg-slate-50/50' : ''}">
-                        <input type="checkbox" ${g.completed ? 'checked' : ''} onchange="toggleGoal(${g.id})" class="w-6 h-6 rounded-full border-2 border-slate-300 appearance-none cursor-pointer checked:bg-indigo-500">
+                        <input type="checkbox" ${g.completed ? 'checked' : ''} onchange="toggleGoal(${g.id})" class="w-6 h-6 rounded-full border-2 border-slate-300 appearance-none cursor-pointer checked:bg-indigo-500 transition-all">
                         <div class="flex-1">
                             <span class="text-[10px] font-black text-indigo-500 uppercase tracking-widest">${g.subject}</span>
-                            <span class="block text-base font-medium ${g.completed ? 'line-through' : ''}">${g.text}</span>
+                            <span class="block text-base font-medium ${g.completed ? 'line-through text-slate-400' : 'text-slate-800'}">${g.text}</span>
                         </div>
-                        <button onclick="deleteGoal(${g.id})" class="text-slate-300 hover:text-red-500 text-2xl">&times;</button>
+                        <button onclick="deleteGoal(${g.id})" class="text-slate-300 hover:text-red-500 text-2xl px-2 transition-colors">&times;</button>
                     </div>
                 `).join('');
         };
@@ -386,7 +396,10 @@
             window.updatePaperTypes = () => {
                 const sub = document.getElementById('paper-subject').value;
                 const types = sub === 'Combined Maths' ? ['Pure', 'Applied'] : ['MCQ', 'Struct/Essay'];
-                document.getElementById('paper-type').innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join('');
+                const select = document.getElementById('paper-type');
+                if (select) {
+                   select.innerHTML = types.map(t => `<option value="${t}">${t}</option>`).join('');
+                }
             };
             updatePaperTypes();
 
@@ -399,7 +412,8 @@
                     };
                 }
             });
-            document.getElementById('log-date-picker').value = new Date().toISOString().split('T')[0];
+            const datePicker = document.getElementById('log-date-picker');
+            if (datePicker) datePicker.value = new Date().toISOString().split('T')[0];
             initFirebase();
         };
     </script>
@@ -415,6 +429,9 @@
         .animate-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         select option { color: #0f172a !important; background: white !important; }
+        input[type="checkbox"]:checked {
+            background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+        }
     </style>
 </head>
 <body class="min-h-screen pb-20">
