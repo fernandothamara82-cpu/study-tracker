@@ -63,11 +63,11 @@
             onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    // Update global state
+                    // Update global state with fallback values
                     history = data.history || [];
                     goals = data.goals || [];
                     inventory = data.inventory || { "Physics": [], "Combined Maths": [], "Chemistry": [] };
-                    currentProgress = data.currentProgress || currentProgress;
+                    currentProgress = { ...currentProgress, ...(data.currentProgress || {}) };
                     
                     // Render UI with new state
                     syncInputsToState();
@@ -76,6 +76,8 @@
                     renderInventory();
                     calculateTotals();
                     updateCharts();
+                } else {
+                    pushData();
                 }
             }, (error) => console.error("Firestore sync error:", error));
         }
@@ -84,7 +86,6 @@
             if (!currentUser) return;
             const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'appData', 'state');
             try {
-                // Ensure we save the latest global state variables
                 await setDoc(docRef, {
                     history,
                     goals,
@@ -100,7 +101,9 @@
         function syncInputsToState() {
             const inputs = getInputs();
             Object.keys(currentProgress).forEach(key => {
-                if (inputs[key]) inputs[key].value = currentProgress[key];
+                if (inputs[key]) {
+                    inputs[key].value = currentProgress[key];
+                }
             });
         }
 
@@ -111,7 +114,9 @@
             }
 
             Object.keys(currentProgress).forEach(key => {
-                currentProgress[key] = Math.max(0, parseInt(inputs[key].value) || 0);
+                if (inputs[key]) {
+                    currentProgress[key] = Math.max(0, parseInt(inputs[key].value) || 0);
+                }
             });
             calculateTotals();
             updateCharts();
@@ -120,7 +125,16 @@
 
         window.calculateTotals = () => {
             const inputs = getInputs();
-            if (!inputs.phyMcq) return { p: 0, m: 0, c: 0 };
+            
+            // Safety check: verify all required inputs exist before proceeding
+            const keys = ['phyMcq', 'phyEssay', 'pure', 'applied', 'chemMcq', 'chemEssay'];
+            const allExist = keys.every(k => inputs[k] !== null);
+            
+            if (!allExist) {
+                // Return defaults if elements aren't ready
+                return { p: 0, m: 0, c: 0 };
+            }
+
             const p = (parseInt(inputs.phyMcq.value) || 0) + (parseInt(inputs.phyEssay.value) || 0);
             const m = (parseInt(inputs.pure.value) || 0) + (parseInt(inputs.applied.value) || 0);
             const c = (parseInt(inputs.chemMcq.value) || 0) + (parseInt(inputs.chemEssay.value) || 0);
@@ -137,8 +151,12 @@
             const badge = document.getElementById('inventory-badge-container');
             const countBadge = document.getElementById('inventory-count-badge');
             if (badge && countBadge) {
-                if (total > 0) { badge.classList.remove('hidden'); countBadge.innerText = total; }
-                else { badge.classList.add('hidden'); }
+                if (total > 0) { 
+                    badge.classList.remove('hidden'); 
+                    countBadge.innerText = total; 
+                } else { 
+                    badge.classList.add('hidden'); 
+                }
             }
             return { p, m, c };
         };
@@ -261,15 +279,14 @@
             pushData();
         };
 
-        // GOAL LOGIC FIXES
         window.addGoal = async () => {
             const subject = document.getElementById('goal-subject').value;
             const text = document.getElementById('goal-desc').value.trim();
             if (!text) return;
             goals.push({ id: Date.now(), subject, text, completed: false });
             document.getElementById('goal-desc').value = '';
-            renderGoals(); // Update UI immediately
-            await pushData(); // Persist to database
+            renderGoals();
+            await pushData();
         };
 
         window.toggleGoal = async (id) => {
